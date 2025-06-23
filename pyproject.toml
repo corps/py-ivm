@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "py-ivm"
+version = "0.1.0"
+authors = [
+    { name = "Zach Collins", email = "recursive.cookie.jar@gmail.com" },
+]
+description = "A python reference implementation of ivm interaction combinator runtime"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+keywords = ["interaction combinators", "ivm", "vine"]
+dependencies = ["regex", "textual"]
+
+[project.scripts]
+py-ivm = "ivm.runner:main"
+
+[project.urls]
+Homepage = "https://vine.dev"
+Repository = "https://github.com/VineLang/vine"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "mypy",
+    "types-regex"
+]
+
+[tool.setuptools.packages.find]
+where = ["py"]
