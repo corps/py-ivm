@@ -17,35 +17,15 @@
       let
         pkgs = import nixpkgs { inherit system; };
         pyproject = pkgs.lib.importTOML ./pyproject.toml;
-        python = pkgs.python311.override {
-          self = python;
-          packageOverrides = pyfinal: pyprev: {
-            py-ivm-editable = pyfinal.mkPythonEditablePackage {
-              pname = pyproject.project.name;
-              inherit (pyproject.project) version;
-              root = "$REPO_ROOT/py";
-              inherit (pyproject.project) scripts;
-              dependencies = with pkgs.python311Packages; [
-                textual
-                regex
-
-                black
-                mypy
-                pytest
-
-                pip
-              ];
-            };
-          };
-        };
-
-        pythonEnv = python.withPackages (ps: [ ps.py-ivm-editable ]);
       in
       {
         devShells.default = pkgs.mkShell {
-          packages = [ pythonEnv ];
+          packages = [ pkgs.python311 ];
           shellHook = ''
-            export REPO_ROOT=$(git rev-parse --show-toplevel)
+            python -m venv venv
+            source venv/bin/activate
+            pip install textual regex types-regex pytest black mypy
+            pip install -e .
           '';
         };
 
@@ -67,7 +47,6 @@
           ];
 
           dependencies = with pkgs.python311Packages; [
-            textual
             regex
           ];
 

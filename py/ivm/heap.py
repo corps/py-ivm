@@ -1,6 +1,6 @@
 import dataclasses
 import enum
-from typing import Any, ClassVar, Optional, Callable
+from typing import Any, ClassVar, Optional, Callable, Iterator
 
 
 # TODO: Move these into distinct file
@@ -27,6 +27,9 @@ class Wire:
     other_half: "Wire"
     left_half: "Wire"
     target: "Wire | Port | None" = None
+
+    def __hash__(self):
+        return id(self)
 
     def __new__(cls, *args: Any, **kwds: Any) -> "Wire":
         left = object.__new__(cls)
@@ -122,6 +125,9 @@ class BranchPort(BinaryNodePort):
     tag: Tag = Tag.Branch
     trace: Trace | None = None
 
+
+_null: Wire = object()  # type: ignore
+
 @dataclasses.dataclass
 class WireHeap:
     wires: list[Wire] = dataclasses.field(default_factory=list)
@@ -144,16 +150,11 @@ class WireHeap:
         return wire
 
     def free_wire(self, wire: Wire) -> None:
-        wire.target = None
-        if wire.other_half.target is None:
+        wire.target = _null
+        if wire.other_half.target is _null:
             wire = wire.left_half
             wire.target = self.free_head
             self.free_head = wire
-
-    def new_wire(self) -> TwoSidedWireReference:
-        wire = self.alloc_node()
-        self.free_wire(wire.other_half)
-        return wire, wire
 
     def new_wires(self) -> tuple[TwoSidedWireReference, TwoSidedWireReference]:
         wire = self.alloc_node()

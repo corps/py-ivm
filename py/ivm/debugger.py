@@ -12,6 +12,7 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Footer, Header, Static, RichLog
 
+from ivm.globals import Instruction, Nilary, Binary
 from ivm.heap import Port, Wire, WirePort, BinaryNodePort, SourceInfo
 from ivm.host import Host
 from ivm.readback import Reader
@@ -27,30 +28,6 @@ from ivm.tree import (
     GlobalNode,
     Net,
 )
-
-
-def find_free_wires(host: Host) -> list[Wire]:
-    parent_status: dict[int, Wire | None] = OrderedDict()
-    heap = host.ivm.heap
-    for base in heap.wires:
-        for wire in (base, base.other_half):
-            if wire.target is None:
-                continue
-            parent_status.setdefault(id(wire), wire)
-            for next_wire, next_port in host.ivm.follow_each_wire(WirePort(wire=wire)):
-                if next_wire is not wire:
-                    parent_status[id(next_wire)] = None
-                if isinstance(next_port, BinaryNodePort):
-                    for sub_wire in next_port.aux():
-                        parent_status[id(sub_wire)] = None
-    for stack in (host.ivm.active_fast, host.ivm.active_slow):
-        for ports in stack:
-            for next_port in ports:
-                if isinstance(next_port, BinaryNodePort):
-                    for sub_wire in next_port.aux():
-                        parent_status[id(sub_wire)] = None
-
-    return [v for k, v in parent_status.items() if v is not None]
 
 
 @dataclasses.dataclass
@@ -83,14 +60,18 @@ tree_colors: dict[type, str] = {
     ExtFnNode: "rgb(95,95,255)",
     BranchNode: "white",
     VarNode: "rgb(95,0,175)",
-    GlobalNode: "magents",
+    GlobalNode: "magenta",
 }
 
 
-class TreeView(RichLog):
-    view_tree: reactive[Tree] = reactive(Erase(None), recompose=True)
+class TreeView(Static):
+    view_tree: reactive[Tree] = reactive(Erase(None))
 
     DEFAULT_CSS = """
+    TreeView {
+        width: 1fr;
+        margin-bottom: 1;
+    }
     """
 
     def __init__(self, tree: Tree):
@@ -99,7 +80,7 @@ class TreeView(RichLog):
 
     def _render_tree(self, n: Tree, width: int, indention: int) -> Iterator[Text]:
         s = str(n)
-        if n.has_children:
+        if n.has_children and width > 0:
             if len(s) + indention > width:
                 yield Text.assemble(
                     " " * indention, (n.head(), tree_colors[type(n)]), "("
@@ -122,15 +103,19 @@ class TreeView(RichLog):
                     )
                 ),
                 *(")" for _ in range(n.has_children)),
+                end="",
             )
         )
 
     def on_resize(self, event: Resize) -> None:
-        width = event.size.width
-        self.clear()
-        for part in self._render_tree(self.view_tree, width, 0):
-            self.write(part)
-        super().on_resize(event)
+        self._render_to_width(event.size.width)
+
+    def _render_to_width(self, width: int) -> None:
+        self.update(
+            Text("\n").join(
+                (part for part in self._render_tree(self.view_tree, width, 0))
+            )
+        )
 
     def watch_view_tree(self, tree: Tree):
         if isinstance(tree.trace, SourceInfo):
@@ -147,11 +132,20 @@ class TreeView(RichLog):
         else:
             self.tooltip = None
 
+        self._render_to_width(self.size.width)
+
 
 class HistoryChart(Widget):
     DEFAULT_CSS = """
     HistoryChart {
         border: solid white;
+    }
+    
+    .stack {
+        height: auto;
+        width: 100%;
+        overflow-y: scroll;
+        overflow-x: hidden;
     }
     
     .stdout, .stderr, .stdin {
@@ -166,13 +160,13 @@ class HistoryChart(Widget):
     history: reactive[History | None] = reactive(None, recompose=True)
 
     def compose(self) -> ComposeResult:
-        cur = self.history
+        cur: History = self.history
         if cur is None:
             yield Static("")
             return
 
         for a, b in cur.stack:
-            with Horizontal():
+            with Horizontal(classes="stack"):
                 yield Word("> ")
                 yield TreeView(a)
                 yield TreeView(b)
@@ -180,21 +174,10 @@ class HistoryChart(Widget):
         yield HorizontalGroup()
 
         for a, b, interaction in cur.interaction_stack:
-            with Horizontal():
+            with Horizontal(classes="stack"):
                 yield Word(interaction)
                 yield TreeView(a)
                 yield TreeView(b)
-
-        with Horizontal(classes="stdout"):
-            yield Word("stdout")
-            yield Static(cur.stdout)
-        with Horizontal(classes="stderr"):
-            yield Word("stderr")
-            yield Static(cur.stderr)
-        with Horizontal(classes="stdin"):
-            yield Word("stdin")
-            yield Static(cur.stdin)
-
 
 class DebuggerApp(App):
     host: Host

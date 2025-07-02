@@ -15,7 +15,7 @@ from .heap import (
     NilaryNodePort,
     BinaryNodePort,
 )
-from .globals import Global, GlobalPort, Instructions, ExecutionContext
+from .globals import Global, GlobalPort, Instructions, ExecutionContext, Instruction
 from .extrinsics import ExtValPort, ExtFnPort, Extrinsics
 
 _P = TypeVar("_P", bound=Port)
@@ -37,6 +37,7 @@ class IVM(ExecutionContext):
     on_link: Callable[[Port, Port], None] | None = None
     on_link_wire: Callable[[Wire, Port], None] | None = None
     on_free_wire: Callable[[], None] | None = None
+    on_start_instruction: Callable[[Instruction], None] | None = None
 
     @contextlib.contextmanager
     def track_interaction(self, a: Port, b: Port, interaction: str):
@@ -196,30 +197,30 @@ class IVM(ExecutionContext):
             self.link_wire(x, a.fork())
             self.link_wire(y, a)
 
-    def _commute_copy(self, b: _BP) -> tuple[_BP, Wire, Wire]:
+    def _copy_with_new_aux(self, b: _BP) -> tuple[_BP, Wire, Wire]:
         wire = self.heap.alloc_node()
         updated = dataclasses.replace(b, target=wire)
         return updated, wire, wire.other_half
 
     def commute(self, a: BinaryNodePort, b: BinaryNodePort):
         with self.track_interaction(a, b, "commute"):
-            a1 = self._commute_copy(a)
-            a2 = self._commute_copy(a)
-            b1 = self._commute_copy(b)
-            b2 = self._commute_copy(b)
+            a1 = self._copy_with_new_aux(a)
+            a2 = self._copy_with_new_aux(a)
+            b1 = self._copy_with_new_aux(b)
+            b2 = self._copy_with_new_aux(b)
 
-            a_1, a_2 = a.aux()
-            b_1, b_2 = b.aux()
+            a_0_1, a_0_2 = a.aux()
+            b_0_1, b_0_2 = b.aux()
 
             self.link_wire_wire(a1[1], b1[1])
             self.link_wire_wire(a1[2], b2[1])
             self.link_wire_wire(a2[1], b1[2])
             self.link_wire_wire(a2[2], b2[2])
 
-            self.link_wire(Wire(a_1), b1[0])
-            self.link_wire(Wire(a_2), b2[0])
-            self.link_wire(Wire(b_1), a1[0])
-            self.link_wire(Wire(b_2), a2[0])
+            self.link_wire(a_0_1, b1[0])
+            self.link_wire(a_0_2, b2[0])
+            self.link_wire(b_0_1, a1[0])
+            self.link_wire(b_0_2, a2[0])
 
     def call(self, a: ExtFnPort, b: ExtValPort):
         with self.track_interaction(a, b, "call"):
@@ -234,7 +235,7 @@ class IVM(ExecutionContext):
                     self.link_wire(out, result)
                     return
 
-            new_fn = self._commute_copy(a.swap())
+            new_fn = self._copy_with_new_aux(a.swap())
             self.link_wire(rhs, new_fn[0])
             self.link_wire(new_fn[1], b)
             self.link_wire_wire(new_fn[2], out)
@@ -242,7 +243,7 @@ class IVM(ExecutionContext):
     def branch(self, a: BranchPort, b: ExtValPort):
         with self.track_interaction(a, b, "branch"):
             b1, b2 = a.aux()
-            branch, z, p = self._commute_copy(a)
+            branch, z, p = self._copy_with_new_aux(a)
             self.link_wire(b1, branch)
             if not b.value:
                 y, n = z, p
@@ -259,6 +260,9 @@ class IVM(ExecutionContext):
         self.link_register(0, port)
 
         for instruction in instructions:
+            if self.on_start_instruction:
+                self.on_start_instruction(instruction)
+
             new_inert = instruction.execute(self)
             if new_inert:
                 self.inert.append(new_inert)

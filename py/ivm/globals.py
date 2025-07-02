@@ -34,6 +34,7 @@ class Nilary(Instruction):
         return None
 
 
+
 @dataclasses.dataclass
 class Binary(Instruction):
     tag: Tag

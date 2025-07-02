@@ -32,6 +32,10 @@ def add_std_compat(host: Host) -> None:
         return PrimitiveExtValPort(N32(a.value == b.value))
 
     @default_ext_fn
+    def n32_ne(a: N32, b: N32) -> ExtValPort:
+        return PrimitiveExtValPort(N32(a.value != b.value))
+
+    @default_ext_fn
     def n32_mul(a: N32, b: N32) -> ExtValPort:
         return PrimitiveExtValPort(N32(a.value * b.value))
 
