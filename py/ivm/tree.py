@@ -167,7 +167,7 @@ class F32Node(Tree):
     def __str__(self):
         if isnan(self.value.value):
             return "+NaN"
-        return f"{self.value:+?}"
+        return f"{self.value!r}"
 
     __repr__ = __str__
 
