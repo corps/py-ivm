@@ -48,6 +48,7 @@
 
           dependencies = with pkgs.python311Packages; [
             regex
+            textual
           ];
 
           pythonImportCheck = [
