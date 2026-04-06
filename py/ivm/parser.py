@@ -134,10 +134,6 @@ class IvyParser:
                     f"Character {c} could not be understood as digit with radix {radix}",
                     self.state.lexer.position,
                 )
-        if result >= 2**32:
-            raise SyntaxError(
-                f"Value {result} is too large for n32", self.state.lexer.position
-            )
         return result
 
     def parse_f32_like(self, token: str) -> float:

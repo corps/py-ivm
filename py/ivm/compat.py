@@ -1,15 +1,7 @@
-import struct
 from typing import Any, Callable
 
 from ivm.extrinsics import ExtVal
 from ivm.host import Host
-
-_U32_MASK = 0xFFFFFFFF
-
-
-def _f32(x: float) -> float:
-    """Truncate a Python float to f32 precision."""
-    return struct.unpack('f', struct.pack('f', x))[0]
 
 
 def add_std_compat(host: Host) -> None:
@@ -28,11 +20,11 @@ def add_std_compat(host: Host) -> None:
 
     @merge_ext_fn
     def n32_sub(a, b):
-        return (a - b) & _U32_MASK
+        return a - b
 
     @merge_ext_fn
     def n32_add(a, b):
-        return (a + b) & _U32_MASK
+        return a + b
 
     @merge_ext_fn
     def n32_eq(a, b):
@@ -44,15 +36,15 @@ def add_std_compat(host: Host) -> None:
 
     @merge_ext_fn
     def n32_mul(a, b):
-        return (a * b) & _U32_MASK
+        return a * b
 
     @merge_ext_fn
     def n32_rem(a, b):
-        return (a % b) & _U32_MASK
+        return a % b
 
     @merge_ext_fn
     def n32_div(a, b):
-        return (a // b) & _U32_MASK
+        return a // b
 
     @merge_ext_fn
     def n32_lt(a, b):
@@ -60,35 +52,35 @@ def add_std_compat(host: Host) -> None:
 
     @merge_ext_fn
     def f32_sub(a, b):
-        return _f32(a - b)
+        return a - b
 
     @merge_ext_fn
     def f32_add(a, b):
-        return _f32(a + b)
+        return a + b
 
     @merge_ext_fn
     def f32_eq(a, b):
-        return _f32(float(a == b))
+        return float(a == b)
 
     @merge_ext_fn
     def f32_ne(a, b):
-        return _f32(float(a != b))
+        return float(a != b)
 
     @merge_ext_fn
     def f32_mul(a, b):
-        return _f32(a * b)
+        return a * b
 
     @merge_ext_fn
     def f32_rem(a, b):
-        return _f32(a % b)
+        return a % b
 
     @merge_ext_fn
     def f32_div(a, b):
-        return _f32(a / b)
+        return a / b
 
     @merge_ext_fn
     def f32_lt(a, b):
-        return _f32(float(a < b))
+        return float(a < b)
 
     # io_read_byte is a split ext fn: takes IO token, returns (byte, io_continuation)
     def io_read_byte(io):
