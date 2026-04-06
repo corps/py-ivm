@@ -1,14 +1,12 @@
 import dataclasses
 from dataclasses import field
-from typing import Any, overload
+from typing import Any
 
-from .extrinsics import ExtValPort, PrimitiveExtValPort, ExtFnPort, Extrinsics
+from .extrinsics import ExtVal, ExtFnPort, Extrinsics
 from .globals import GlobalPort
-from .heap import Port, WirePort, ErasePort, BranchPort, Wire, CombPort, Trace
+from .heap import Port, WirePort, ErasePort, BranchPort, Wire, CombPort
 from .tree import (
     Tree,
-    N32,
-    F32,
     VarNode,
     GlobalNode,
     Erase,
@@ -21,7 +19,8 @@ from .tree import (
 from .vm import IVM
 
 
-class CachedExtValPort(ExtValPort):
+class CachedExtVal(ExtVal):
+    """An ExtVal that remembers its original Tree representation."""
     serialized: Tree
 
     def __init__(self, value: Any, tree: Tree):
@@ -34,17 +33,15 @@ class ExtrinsicsCache:
     cache: list[Any] = dataclasses.field(default_factory=list)
     ext_fn_name: str = "cache"
 
-    def __call__(self, value: Any, b: Any) -> ExtValPort:
-        assert isinstance(value, N32)
-        return CachedExtValPort(
-            self.cache[value.value],
-            ExtFnNode(
-                self.ext_fn_name, N32Node(value, None), N32Node(N32(0), None), None
-            ),
+    def __call__(self, value: Any, b: Any) -> ExtVal:
+        assert isinstance(value, int)
+        return CachedExtVal(
+            self.cache[value],
+            ExtFnNode(self.ext_fn_name, N32Node(value), N32Node(0)),
         )
 
-    def add_new_val(self, val: Any) -> ExtValPort:
-        idx = N32(len(self.cache))
+    def add_new_val(self, val: Any) -> ExtVal:
+        idx = len(self.cache)
         self.cache.append(val)
         return self(idx, idx)
 
@@ -59,7 +56,7 @@ class Reader:
     vars: dict[int, int] = field(default_factory=dict)
     next_var: int = 0
 
-    def identify_wire(self, wire: Wire, trace: Trace | None = None) -> VarNode:
+    def identify_wire(self, wire: Wire) -> VarNode:
         addr = id(wire)
         if addr in self.vars:
             n = self.vars[addr]
@@ -67,43 +64,30 @@ class Reader:
             n = self.next_var
             self.next_var += 1
             self.vars[addr] = n
-        return VarNode(f"n{n}", trace)
+        return VarNode(f"n{n}")
 
     def read_port(self, p: Port, shallow: bool = True) -> Tree:
         if not shallow:
             p = self.ivm.follow(p, destructive=False)
 
         if isinstance(p, WirePort):
-            return self.identify_wire(p.wire, p.trace)
+            return self.identify_wire(p.wire)
         elif isinstance(p, GlobalPort):
-            return GlobalNode(p.global_ref.name, p.trace)
+            return GlobalNode(p.global_ref.name)
         elif isinstance(p, ErasePort):
-            return Erase(p.trace)
-        elif isinstance(p, ExtValPort):
-            if isinstance(p, PrimitiveExtValPort):
-                if isinstance(p.value, N32):
-                    return N32Node(p.value, p.trace)
-                elif isinstance(p.value, F32):
-                    return F32Node(p.value, p.trace)
-            elif isinstance(p, CachedExtValPort):
+            return Erase()
+        elif isinstance(p, ExtVal):
+            if isinstance(p, CachedExtVal):
                 return p.serialized
-            raise NotImplementedError(f"Unknown ExtValPort type {type(p)}")
+            if isinstance(p.value, float):
+                return F32Node(p.value)
+            return N32Node(p.value)
         elif isinstance(p, CombPort):
             p1, p2 = p.aux()
-            return CombNode(
-                p.label,
-                self.read_wire(p1, shallow),
-                self.read_wire(p2, shallow),
-                p.trace,
-            )
+            return CombNode(p.label, self.read_wire(p1, shallow), self.read_wire(p2, shallow))
         elif isinstance(p, ExtFnPort):
             p1, p2 = p.aux()
-            return ExtFnNode(
-                p.label,
-                self.read_wire(p1, shallow),
-                self.read_wire(p2, shallow),
-                p.trace,
-            )
+            return ExtFnNode(p.label, self.read_wire(p1, shallow), self.read_wire(p2, shallow))
         elif isinstance(p, BranchPort):
             p1, p2 = p.aux()
             bp = self.ivm.follow(WirePort(wire=p1), destructive=False)
@@ -113,15 +97,9 @@ class Reader:
                     self.read_wire(p11, shallow),
                     self.read_wire(p12, shallow),
                     self.read_wire(p2, shallow),
-                    p.trace,
                 )
             else:
-                return CombNode(
-                    "?^",
-                    self.read_wire(p1, shallow),
-                    self.read_wire(p2, shallow),
-                    p.trace,
-                )
+                return CombNode("?^", self.read_wire(p1, shallow), self.read_wire(p2, shallow))
         else:
             raise NotImplementedError(f"Unknown type {type(p)}")
 

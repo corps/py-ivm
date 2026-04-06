@@ -1,29 +1,14 @@
 import dataclasses
 from dataclasses import field
-from typing import Any, Callable, Mapping
+from typing import Any, Callable
 
-from .tree import N32, F32
-from .heap import NilaryNodePort, Tag, BinaryNodePort, Wire, Trace
+from .heap import NilaryNodePort, BinaryNodePort, Wire
 
 
 @dataclasses.dataclass
-class ExtValPort(NilaryNodePort):
+class ExtVal(NilaryNodePort):
+    """Lightweight wrapper for external values in the interaction net."""
     value: Any
-    tag: Tag = Tag.ExtVal
-    trace: Trace | None = None
-
-    def fork(self) -> "NilaryNodePort":
-        raise NotImplementedError(f"Extrinsic values should subclass fork")
-
-    def drop(self) -> None:
-        raise NotImplementedError(f"Extrinsic values should subclass drop")
-
-
-@dataclasses.dataclass
-class PrimitiveExtValPort(ExtValPort):
-    value: N32 | F32
-    tag: Tag = Tag.ExtVal
-    trace: Trace | None = None
 
     def fork(self) -> "NilaryNodePort":
         return self
@@ -32,12 +17,15 @@ class PrimitiveExtValPort(ExtValPort):
         return
 
 
+# Backward compat aliases
+ExtValPort = ExtVal
+PrimitiveExtValPort = ExtVal
+
+
 @dataclasses.dataclass
 class ExtFnPort(BinaryNodePort):
     label: str
     target: Wire
-    tag: Tag = Tag.ExtFn
-    trace: Trace | None = None
 
     @property
     def swapped(self) -> bool:
@@ -58,4 +46,5 @@ class ExtFnPort(BinaryNodePort):
 
 @dataclasses.dataclass
 class Extrinsics:
-    ext_fns: dict[str, Callable[[Any, Any], ExtValPort]] = field(default_factory=dict)
+    ext_fns: dict[str, Callable] = field(default_factory=dict)
+    split_ext_fns: dict[str, Callable] = field(default_factory=dict)

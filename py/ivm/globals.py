@@ -1,22 +1,18 @@
 import dataclasses
-from typing import Protocol, Iterator, Callable
+from typing import Protocol, Iterator
 
 from .extrinsics import ExtFnPort
 from .heap import (
     Port,
     NilaryNodePort,
-    Tag,
-    WireHeap,
     CombPort,
     BranchPort,
     WirePort,
-    Trace, BinaryNodePort,
+    make_wire_pair,
 )
 
 
 class ExecutionContext(Protocol):
-    heap: WireHeap
-
     def link_register(self, register: int, port: Port): ...
 
 
@@ -34,28 +30,25 @@ class Nilary(Instruction):
         return None
 
 
-
 @dataclasses.dataclass
 class Binary(Instruction):
-    tag: Tag
+    tag: str  # "Comb", "Branch", or "ExtFn"
     label: str
     register0: int
     register1: int
     register2: int
-    trace: Trace | None
 
     def execute(self, context: ExecutionContext) -> tuple[Port, Port] | None:
-        wire = context.heap.alloc_node()
-        port: BinaryNodePort
-        if self.tag == Tag.Comb:
-            port = CombPort(target=wire, label=self.label, trace=self.trace)
-        elif self.tag == Tag.Branch:
-            port = BranchPort(target=wire, label=self.label, trace=self.trace)
+        wire, wire_other = make_wire_pair()
+        if self.tag == "Comb":
+            port = CombPort(target=wire, label=self.label)
+        elif self.tag == "Branch":
+            port = BranchPort(target=wire, label=self.label)
         else:
-            port = ExtFnPort(target=wire, label=self.label, trace=self.trace)
+            port = ExtFnPort(target=wire, label=self.label)
         context.link_register(self.register0, port)
         context.link_register(self.register1, WirePort(wire=wire))
-        context.link_register(self.register2, WirePort(wire=wire.other_half))
+        context.link_register(self.register2, WirePort(wire=wire_other))
         return None
 
 
@@ -65,10 +58,11 @@ class Inert(Instruction):
     register1: int
 
     def execute(self, context: ExecutionContext) -> tuple[Port, Port] | None:
-        wires = context.heap.new_wires()
-        context.link_register(self.register0, WirePort(wire=wires[0][0]))
-        context.link_register(self.register1, WirePort(wire=wires[1][0]))
-        return WirePort(wire=wires[0][1]), WirePort(wire=wires[1][1])
+        w1, w1o = make_wire_pair()
+        w2, w2o = make_wire_pair()
+        context.link_register(self.register0, WirePort(wire=w1))
+        context.link_register(self.register1, WirePort(wire=w2))
+        return WirePort(wire=w1o), WirePort(wire=w2o)
 
 
 @dataclasses.dataclass
@@ -91,9 +85,6 @@ class Instructions:
 @dataclasses.dataclass
 class Global:
     name: str
-    # Specifically, the combinator labels that exist in this network -- used to shortcut
-    # copying global = combinator interactions when they would just erase anyways.
-    # See serialization logic for how this gets filled out.
     labels: tuple[set[str], dict[str, set[str]]] = dataclasses.field(
         default_factory=lambda: (set(), {})
     )
@@ -113,5 +104,3 @@ class Global:
 @dataclasses.dataclass
 class GlobalPort(NilaryNodePort):
     global_ref: Global
-    tag: Tag = Tag.Global
-    trace: Trace | None = None

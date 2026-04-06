@@ -1,22 +1,20 @@
-import contextlib
 import dataclasses
 from dataclasses import field
-from typing import TypeVar, Iterable, Callable, Iterator, Generator, ContextManager
+from typing import TypeVar, Iterable, Iterator, Generator
 
 from .heap import (
     Port,
     Wire,
-    WireHeap,
-    Tag,
     WirePort,
     CombPort,
     ErasePort,
     BranchPort,
     NilaryNodePort,
     BinaryNodePort,
+    make_wire_pair,
 )
-from .globals import Global, GlobalPort, Instructions, ExecutionContext, Instruction
-from .extrinsics import ExtValPort, ExtFnPort, Extrinsics
+from .globals import Global, GlobalPort, Instructions, ExecutionContext
+from .extrinsics import ExtVal, ExtValPort, ExtFnPort, Extrinsics
 
 _P = TypeVar("_P", bound=Port)
 _Q = TypeVar("_Q", bound=Port)
@@ -25,40 +23,12 @@ _BP = TypeVar("_BP", bound=BinaryNodePort)
 
 @dataclasses.dataclass
 class IVM(ExecutionContext):
-    heap: WireHeap = field(default_factory=WireHeap)
     active_fast: list[tuple[Port, Port]] = field(default_factory=list)
     active_slow: list[tuple[Port, Port]] = field(default_factory=list)
-    inert: list[tuple[Port, Port]] = field(default_factory=list)
     registers: list[Port | None] = field(default_factory=list)
     extrinsics: Extrinsics = field(default_factory=lambda: Extrinsics())
 
-    on_start_interaction: Callable[[Port, Port, str], None] | None = None
-    on_complete_interaction: Callable[[], None] | None = None
-    on_link: Callable[[Port, Port], None] | None = None
-    on_link_wire: Callable[[Wire, Port], None] | None = None
-    on_free_wire: Callable[[], None] | None = None
-    on_start_instruction: Callable[[Instruction], None] | None = None
-
-    @contextlib.contextmanager
-    def track_interaction(self, a: Port, b: Port, interaction: str):
-        if self.on_start_interaction:
-            self.on_start_interaction(a, b, interaction)
-
-        try:
-            yield
-        finally:
-            if self.on_complete_interaction:
-                self.on_complete_interaction()
-
     def boot(self, g: Global, ext_val: ExtValPort):
-        """
-        Combines an external global reference and extrinsic expression value
-        as ports into the network, making the system "active" for normalization.
-
-        The given ext_val is forked before being applied into the network, and the global
-        is given its own port wrapper.  This generally makes it "safe" to external
-        re-entry, but keep in mind any special assumptions of the ext_val.
-        """
         self.link(GlobalPort(global_ref=g), ext_val.fork())
 
     def link_register(self, register: int, port: Port) -> None:
@@ -91,8 +61,6 @@ class IVM(ExecutionContext):
     def follow(self, a: Port, destructive: bool) -> Port:
         for wire, b in self.follow_each_wire(a):
             if b:
-                if destructive:
-                    self.heap.free_wire(wire)
                 a = b
         return a
 
@@ -107,18 +75,12 @@ class IVM(ExecutionContext):
                 break
 
     def link_wire(self, a: Wire, b: Port):
-        if self.on_link_wire:
-            self.on_link_wire(a, b)
         b = self.follow(b, True)
         c = a.swap_target(b)
         if c:
-            self.heap.free_wire(a)
             self.link(c, b)
 
     def link(self, a: Port, b: Port) -> None:
-        if self.on_link:
-            self.on_link(a, b)
-
         if ports := _find_either_is(a, b, WirePort):
             a, b = ports
             self.link_wire(a.wire, b)
@@ -126,14 +88,13 @@ class IVM(ExecutionContext):
         if _find_both_one_of(a, b, (GlobalPort, ErasePort)) or _find_both_one_of(
             a, b, (ExtValPort, ErasePort)
         ):
-            with self.track_interaction(a, b, "erase"):
-                if isinstance(a, ExtValPort):
-                    a.drop()
-                if isinstance(b, ExtValPort):
-                    b.drop()
-                return
+            if isinstance(a, ExtValPort):
+                a.drop()
+            if isinstance(b, ExtValPort):
+                b.drop()
+            return
         if (comb_ports := _find_both_are(a, b, BinaryNodePort)) and (
-            a.tag == b.tag == Tag.Comb or a.tag == b.tag == Tag.ExtFn
+            type(a) is type(b) and isinstance(a, (CombPort, ExtFnPort))
         ):
             if comb_ports[0].label == comb_ports[1].label:
                 self.active_fast.append(comb_ports)
@@ -181,76 +142,93 @@ class IVM(ExecutionContext):
         assert False, "unreachable"
 
     def expand(self, a: GlobalPort, b: Port):
-        with self.track_interaction(a, b, "expand"):
-            self.execute(a.global_ref.instructions, b)
+        self.execute(a.global_ref.instructions, b)
 
     def annihilate(self, a: BinaryNodePort, b: BinaryNodePort):
-        with self.track_interaction(a, b, "annihilate"):
-            a1, a2 = a.aux()
-            b1, b2 = b.aux()
-            self.link_wire_wire(a1, b1)
-            self.link_wire_wire(a2, b2)
+        a1, a2 = a.aux()
+        b1, b2 = b.aux()
+        self.link_wire_wire(a1, b1)
+        self.link_wire_wire(a2, b2)
 
     def copy(self, a: NilaryNodePort, b: BinaryNodePort):
-        with self.track_interaction(a, b, "copy"):
-            x, y = b.aux()
-            self.link_wire(x, a.fork())
-            self.link_wire(y, a)
+        x, y = b.aux()
+        self.link_wire(x, a.fork())
+        self.link_wire(y, a)
 
     def _copy_with_new_aux(self, b: _BP) -> tuple[_BP, Wire, Wire]:
-        wire = self.heap.alloc_node()
+        wire, wire_other = make_wire_pair()
         updated = dataclasses.replace(b, target=wire)
-        return updated, wire, wire.other_half
+        return updated, wire, wire_other
 
     def commute(self, a: BinaryNodePort, b: BinaryNodePort):
-        with self.track_interaction(a, b, "commute"):
-            a1 = self._copy_with_new_aux(a)
-            a2 = self._copy_with_new_aux(a)
-            b1 = self._copy_with_new_aux(b)
-            b2 = self._copy_with_new_aux(b)
+        a1 = self._copy_with_new_aux(a)
+        a2 = self._copy_with_new_aux(a)
+        b1 = self._copy_with_new_aux(b)
+        b2 = self._copy_with_new_aux(b)
 
-            a_0_1, a_0_2 = a.aux()
-            b_0_1, b_0_2 = b.aux()
+        a_0_1, a_0_2 = a.aux()
+        b_0_1, b_0_2 = b.aux()
 
-            self.link_wire_wire(a1[1], b1[1])
-            self.link_wire_wire(a1[2], b2[1])
-            self.link_wire_wire(a2[1], b1[2])
-            self.link_wire_wire(a2[2], b2[2])
+        self.link_wire_wire(a1[1], b1[1])
+        self.link_wire_wire(a1[2], b2[1])
+        self.link_wire_wire(a2[1], b1[2])
+        self.link_wire_wire(a2[2], b2[2])
 
-            self.link_wire(a_0_1, b1[0])
-            self.link_wire(a_0_2, b2[0])
-            self.link_wire(b_0_1, a1[0])
-            self.link_wire(b_0_2, a2[0])
+        self.link_wire(a_0_1, b1[0])
+        self.link_wire(a_0_2, b2[0])
+        self.link_wire(b_0_1, a1[0])
+        self.link_wire(b_0_2, a2[0])
+
+    @staticmethod
+    def _wrap_result(result):
+        """Auto-wrap a plain value in ExtVal if it isn't already."""
+        if isinstance(result, Port):
+            return result
+        return ExtVal(result)
 
     def call(self, a: ExtFnPort, b: ExtValPort):
-        with self.track_interaction(a, b, "call"):
+        label = a.unwrap_label()
+
+        # Split ext fn: one input -> two outputs
+        if label in self.extrinsics.split_ext_fns:
             rhs, out = a.aux()
-            rhs_port = rhs.load_target()
-            if rhs_port:
-                if isinstance(rhs_port, ExtValPort):
-                    self.heap.free_wire(rhs)
-                    result = self.extrinsics.ext_fns[a.unwrap_label()](
+            result1, result2 = self.extrinsics.split_ext_fns[label](b.value)
+            self.link_wire(rhs, self._wrap_result(result1))
+            self.link_wire(out, self._wrap_result(result2))
+            return
+
+        # Merge ext fn: two inputs -> one output
+        rhs, out = a.aux()
+        rhs_port = rhs.load_target()
+        if rhs_port:
+            if isinstance(rhs_port, ExtValPort):
+                rhs.target = None  # disconnect
+                if a.swapped:
+                    result = self.extrinsics.ext_fns[label](
+                        rhs_port.value, b.value
+                    )
+                else:
+                    result = self.extrinsics.ext_fns[label](
                         b.value, rhs_port.value
                     )
-                    self.link_wire(out, result)
-                    return
+                self.link_wire(out, self._wrap_result(result))
+                return
 
-            new_fn = self._copy_with_new_aux(a.swap())
-            self.link_wire(rhs, new_fn[0])
-            self.link_wire(new_fn[1], b)
-            self.link_wire_wire(new_fn[2], out)
+        new_fn = self._copy_with_new_aux(a.swap())
+        self.link_wire(rhs, new_fn[0])
+        self.link_wire(new_fn[1], b)
+        self.link_wire_wire(new_fn[2], out)
 
     def branch(self, a: BranchPort, b: ExtValPort):
-        with self.track_interaction(a, b, "branch"):
-            b1, b2 = a.aux()
-            branch, z, p = self._copy_with_new_aux(a)
-            self.link_wire(b1, branch)
-            if not b.value:
-                y, n = z, p
-            else:
-                y, n = p, z
-            self.link_wire(n, Port.ERASE)
-            self.link_wire_wire(b2, y)
+        b1, b2 = a.aux()
+        branch, z, p = self._copy_with_new_aux(a)
+        self.link_wire(b1, branch)
+        if not b.value:
+            y, n = z, p
+        else:
+            y, n = p, z
+        self.link_wire(n, Port.ERASE)
+        self.link_wire_wire(b2, y)
 
     def execute(self, instructions: Instructions, port: Port) -> None:
         needed_registers = max(instructions.next_register, 1)
@@ -260,14 +238,10 @@ class IVM(ExecutionContext):
         self.link_register(0, port)
 
         for instruction in instructions:
-            if self.on_start_instruction:
-                self.on_start_instruction(instruction)
-
             new_inert = instruction.execute(self)
             if new_inert:
-                self.inert.append(new_inert)
+                pass  # inert pairs are unused without debugger
 
-        # Registers used twice self clear, whereas odd ones represent leak!
         for register in self.registers:
             assert (
                 register is None

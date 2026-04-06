@@ -2,13 +2,10 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import overload, Literal
 
-from .heap import Trace, SourceInfo, SpanInfo
 from .tree import (
     Net,
     Tree,
     Nets,
-    N32,
-    F32,
     BlackBox,
     Erase,
     BranchNode,
@@ -112,7 +109,7 @@ class IvyParser:
                 ),
             )
 
-    def parse_u32_like(self, token: str) -> N32:
+    def parse_u32_like(self, token: str) -> int:
         if token.startswith("0b"):
             token = token[2:]
             radix = 2
@@ -141,11 +138,11 @@ class IvyParser:
             raise SyntaxError(
                 f"Value {result} is too large for n32", self.state.lexer.position
             )
-        return N32(result)
+        return result
 
-    def parse_f32_like(self, token: str) -> F32:
+    def parse_f32_like(self, token: str) -> float:
         try:
-            return F32(float(token))
+            return float(token)
         except ValueError:
             raise SyntaxError(
                 f"Value {token} could not be understood as float",
@@ -154,41 +151,9 @@ class IvyParser:
 
     def parse_nets(self) -> Nets:
         nets: Nets = OrderedDict()
-        start_pos = self.state.lexer.position
         while name := self.state.eat(global_, require=False):
             net = self.parse_net()
-            end_pos = self.state.lexer.position
-            source = self.state.lexer.take_source(start_pos, end_pos)
-
-            for t in net:
-                if not isinstance(t.trace, SpanInfo):
-                    continue
-                t.trace = SourceInfo(
-                    head_span=(
-                        t.trace.head_span[0] - start_pos[0],
-                        (
-                            t.trace.head_span[1][0] - start_pos[1][0],
-                            t.trace.head_span[1][1] - start_pos[1][0],
-                        ),
-                    ),
-                    row_span=(
-                        t.trace.row_span[0] - start_pos[0],
-                        t.trace.row_span[1] - start_pos[0],
-                    ),
-                    col_span=(
-                        (
-                            t.trace.col_span[0] - start_pos[1][0]
-                            if t.trace.row_span[0] == start_pos[0]
-                            else t.trace.col_span[0]
-                        ),
-                        t.trace.col_span[1],
-                    ),
-                    containing_net_name=name,
-                    containing_net_source=source,
-                )
-
             nets[name] = net
-            start_pos = end_pos
         return nets
 
     def parse_net(self) -> Net:
@@ -206,61 +171,21 @@ class IvyParser:
         return a, b
 
     def parse_tree(self) -> Tree:
-        start_pos = self.state.lexer.position
         if self.state.check(n32):
-            return N32Node(
-                self.parse_u32_like(self.state.eat(n32, require=True)),
-                SpanInfo(
-                    head_span=start_pos,
-                    row_span=(start_pos[0], start_pos[0]),
-                    col_span=start_pos[1],
-                ),
-            )
+            return N32Node(self.parse_u32_like(self.state.eat(n32, require=True)))
         elif self.state.check(f32):
-            return F32Node(
-                self.parse_f32_like(self.state.eat(f32, require=True)),
-                SpanInfo(
-                    head_span=start_pos,
-                    row_span=(start_pos[0], start_pos[0]),
-                    col_span=start_pos[1],
-                ),
-            )
+            return F32Node(self.parse_f32_like(self.state.eat(f32, require=True)))
         elif self.state.check(global_):
-            global_name = self.state.eat(global_, require=True)
-            return GlobalNode(
-                global_name,
-                SpanInfo(
-                    head_span=start_pos,
-                    row_span=(start_pos[0], start_pos[0]),
-                    col_span=start_pos[1],
-                ),
-            )
+            return GlobalNode(self.state.eat(global_, require=True))
         elif self.state.check(ident_):
             ident = self.state.eat(ident_, require=True)
             if self.state.eat(open_paren, require=False):
                 a = self.parse_tree()
                 b = self.parse_tree()
                 self.state.eat(close_paren, require=True)
-                end_pos = self.state.lexer.position
-                return CombNode(
-                    ident,
-                    a,
-                    b,
-                    SpanInfo(
-                        head_span=start_pos,
-                        row_span=(start_pos[0], end_pos[0]),
-                        col_span=(start_pos[1][0], end_pos[1][1]),
-                    ),
-                )
+                return CombNode(ident, a, b)
             else:
-                return VarNode(
-                    ident,
-                    SpanInfo(
-                        head_span=start_pos,
-                        row_span=(start_pos[0], start_pos[0]),
-                        col_span=start_pos[1],
-                    ),
-                )
+                return VarNode(ident)
 
         if self.state.eat(at, require=False):
             ident = self.state.eat(ident_, require=True)
@@ -269,17 +194,7 @@ class IvyParser:
             a = self.parse_tree()
             b = self.parse_tree()
             self.state.eat(close_paren, require=True)
-            end_pos = self.state.lexer.position
-            return ExtFnNode(
-                ident + ("$" if swapped else ""),
-                a,
-                b,
-                SpanInfo(
-                    head_span=start_pos,
-                    row_span=(start_pos[0], end_pos[0]),
-                    col_span=(start_pos[1][0], end_pos[1][1]),
-                ),
-            )
+            return ExtFnNode(ident + ("$" if swapped else ""), a, b)
 
         if self.state.eat(question, require=False):
             self.state.eat(open_paren, require=True)
@@ -287,32 +202,16 @@ class IvyParser:
             b = self.parse_tree()
             c = self.parse_tree()
             self.state.eat(close_paren, require=True)
-            end_pos = self.state.lexer.position
-            return BranchNode(
-                a,
-                b,
-                c,
-                SpanInfo(
-                    head_span=start_pos,
-                    row_span=(start_pos[0], end_pos[0]),
-                    col_span=(start_pos[1][0], end_pos[1][1]),
-                ),
-            )
+            return BranchNode(a, b, c)
 
         if self.state.eat(hole, require=False):
-            return Erase(
-                SpanInfo(
-                    head_span=start_pos,
-                    row_span=(start_pos[0], start_pos[0]),
-                    col_span=start_pos[1],
-                )
-            )
+            return Erase()
 
         if self.state.eat(hash_, require=False):
             self.state.eat(open_bracket, require=True)
             inner = self.parse_tree()
             self.state.eat(close_bracket, require=True)
-            return BlackBox(inner, None)
+            return BlackBox(inner)
 
         raise SyntaxError(
             f"Unexpected token {self.state.last_token}", self.state.lexer.position
