@@ -29,3 +29,13 @@ def run_program(host, filename, stdin_data=None):
     host.execute()
     host.stdout.flush()
     return host.stdout.buffer.getvalue().decode()
+
+def step_program(host: Host, filename: str, stdin_data: str | None=None):
+    if stdin_data is not None:
+        host.stdin = TextIOWrapper(BytesIO(stdin_data.encode()))
+    filepath = os.path.join(PROGRAMS_DIR, filename)
+    host.parse_file(filepath)
+    host.boot("::main", PrimitiveExtValPort(0))
+    host.execute()
+    host.stdout.flush()
+    return host.stdout.buffer.getvalue().decode()

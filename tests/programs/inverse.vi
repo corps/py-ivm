@@ -1,0 +1,44 @@
+
+// @run -d
+
+pub fn main(&io: &IO) {
+  refs(&io);
+  io.println("");
+  rev(&io);
+}
+
+fn refs(&io: &IO) {
+  let x = 0;
+  inc((x, ~x));
+  io.println("x = {x}");
+  inc((x, ~x));
+  io.println("x = {x}");
+  inc((x, ~x));
+  io.println("x = {x}");
+}
+
+mod refs {
+  fn inc((init: N32, ~fin: ~N32)) {
+    fin = init + 1;
+  }
+}
+
+fn rev(&io: &IO) {
+  let s;
+  ~s = "0";
+  io.println("s = {~s}");
+  io.println("s = {~s}");
+  set(&s, "1");
+  io.println("s = {get(&s)}");
+  io.println("s = {get(&s)}");
+  ~s = "2";
+}
+
+mod rev {
+  fn get[T+](&x: &~T) -> T {
+    ~x
+  }
+  fn set[T?](&x: &~T, value: T) {
+    ~x = value
+  }
+}
